@@ -100,6 +100,7 @@ func (a *App) handlePostTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	PostTranscriptProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	PostTranscriptRequests.Inc()
 	w.WriteHeader(http.StatusCreated)
@@ -132,6 +133,7 @@ func (a *App) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	GetTranscriptProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	GetTranscriptRequests.Inc()
 	writeJSON(w, transcript)
@@ -151,6 +153,7 @@ func (a *App) handleSearchTranscripts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	SearchTranscriptsProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	SearchTranscriptsRequests.Inc()
 	writeJSON(w, results)
@@ -180,6 +183,7 @@ func (a *App) handleGetGraphByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	GetGraphProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	GetGraphRequests.Inc()
 	writeJSON(w, graphData)
@@ -199,6 +203,7 @@ func (a *App) handleGetGraphAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	GetAllGraphProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	GetAllGraphRequests.Inc()
 	writeJSON(w, graphData)
@@ -224,6 +229,7 @@ func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	GetStreamMetadataProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	GetStreamMetadataRequests.Inc()
 	writeJSON(w, streamhData)
