@@ -220,8 +220,14 @@ func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streamhData, err := a.retrieveStreamMetadata(ctx, id)
+	streamhData, noRows, err := a.retrieveStreamMetadata(ctx, id)
 	if err != nil {
+		if noRows {
+			Http400Errors.Inc()
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+
 		slog.Error("failed to query stream metadata", "id", id, "err", err)
 		Http500Errors.Inc()
 		writeError(w, http.StatusInternalServerError, "Failed to get stream metadata")

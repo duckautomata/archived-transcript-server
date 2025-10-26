@@ -170,7 +170,7 @@ func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutp
 }
 
 // retrieveTranscript now accepts a context
-func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMetadataOutput, error) {
+func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMetadataOutput, bool, error) {
 	var output StreamMetadataOutput
 
 	// Retrieve transcript metadata
@@ -180,13 +180,13 @@ func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMeta
 	)
 	err := row.Scan(&output.ID, &output.Streamer, &output.Date, &output.StreamTitle, &output.StreamType)
 	if err == sql.ErrNoRows {
-		return StreamMetadataOutput{}, fmt.Errorf("stream with id '%s' not found", id)
+		return StreamMetadataOutput{}, true, fmt.Errorf("stream with id '%s' not found", id)
 	}
 	if err != nil {
-		return StreamMetadataOutput{}, fmt.Errorf("failed to retrieve stream metadata: %w", err)
+		return StreamMetadataOutput{}, false, fmt.Errorf("failed to retrieve stream metadata: %w", err)
 	}
 
-	return output, nil
+	return output, false, nil
 }
 
 // queryTranscripts already uses context, so no changes were needed here.
