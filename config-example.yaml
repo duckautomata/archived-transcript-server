@@ -1,0 +1,11 @@
+# An example config file.
+# Please do not edit this and instead make a copy and use that.
+# By default, it will grab config.yaml
+####################################################################
+
+credentials:
+  # credentials must exclude %:/\`'"
+  # credentials used to restrict who can upload transcripts
+  upload: ""
+  # credentials used to restrict who can use membership transcripts
+  membership: ""
