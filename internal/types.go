@@ -96,3 +96,13 @@ type GraphDataPoint struct {
 	X string `json:"x"` // Can be "hh:mm:ss" or "YYYY-MM-DD"
 	Y int    `json:"y"`
 }
+
+type QueryData struct {
+	SearchText     string
+	MatchWholeWord bool
+	Streamer       string
+	StreamTitle    string
+	FromDate       string
+	ToDate         string
+	StreamTypes    []string
+}

@@ -50,29 +50,41 @@ func parseSRTForLines(srtContent string) []TranscriptLine {
 	return lines
 }
 
+func parseQueryData(q url.Values) QueryData {
+	return QueryData{
+		SearchText:     q.Get("searchText"),
+		MatchWholeWord: q.Get("matchWholeWord") == "true",
+		Streamer:       q.Get("streamer"),
+		StreamTitle:    q.Get("streamTitle"),
+		FromDate:       q.Get("fromDate"),
+		ToDate:         q.Get("toDate"),
+		StreamTypes:    q["streamType"],
+	}
+}
+
 // buildFilterQuery dynamically builds the WHERE clause and arg list for filters.
-func buildFilterQuery(qParams *strings.Builder, sqlArgs *[]any, q url.Values) {
+func buildFilterQuery(qParams *strings.Builder, sqlArgs *[]any, queryData QueryData) {
 	qParams.WriteString(" WHERE 1=1")
 
-	if streamer := q.Get("streamer"); streamer != "" {
+	if queryData.Streamer != "" {
 		qParams.WriteString(" AND t.streamer = ?")
-		*sqlArgs = append(*sqlArgs, streamer)
+		*sqlArgs = append(*sqlArgs, queryData.Streamer)
 	}
-	if title := q.Get("streamTitle"); title != "" {
+	if queryData.StreamTitle != "" {
 		qParams.WriteString(" AND t.title LIKE ?")
-		*sqlArgs = append(*sqlArgs, "%"+title+"%")
+		*sqlArgs = append(*sqlArgs, "%"+queryData.StreamTitle+"%")
 	}
-	if fromDate := q.Get("fromDate"); fromDate != "" {
+	if queryData.FromDate != "" {
 		qParams.WriteString(" AND t.date >= ?")
-		*sqlArgs = append(*sqlArgs, fromDate)
+		*sqlArgs = append(*sqlArgs, queryData.FromDate)
 	}
-	if toDate := q.Get("toDate"); toDate != "" {
+	if queryData.ToDate != "" {
 		qParams.WriteString(" AND t.date <= ?")
-		*sqlArgs = append(*sqlArgs, toDate)
+		*sqlArgs = append(*sqlArgs, queryData.ToDate)
 	}
-	if streamTypes := q["streamType"]; len(streamTypes) > 0 {
+	if len(queryData.StreamTypes) > 0 {
 		var placeholders strings.Builder
-		for i, st := range streamTypes {
+		for i, st := range queryData.StreamTypes {
 			if i > 0 {
 				placeholders.WriteString(", ")
 			}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -109,6 +108,10 @@ func (a *App) handlePostTranscript(w http.ResponseWriter, r *http.Request) {
 
 // handleGetTranscript returns a single transcript's formatted lines.
 func (a *App) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
+	Http500Errors.Inc()
+	writeError(w, http.StatusNotFound, "Failed to retrieve transcript")
+	return
+
 	startTime := time.Now()
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -118,17 +121,17 @@ func (a *App) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transcript, err := a.retrieveTranscript(ctx, id)
+	transcript, noRows, err := a.retrieveTranscript(ctx, id)
 	if err != nil {
-		// Check if the error indicates "not found"
-		if strings.Contains(err.Error(), "not found") {
+		if noRows {
 			Http400Errors.Inc()
 			writeError(w, http.StatusNotFound, err.Error())
-		} else {
-			slog.Error("failed to retrieve transcript", "id", id, "err", err)
-			Http500Errors.Inc()
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve transcript")
+			return
 		}
+
+		slog.Error("failed to retrieve transcript", "id", id, "err", err)
+		Http500Errors.Inc()
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve transcript")
 		return
 	}
 
@@ -144,9 +147,10 @@ func (a *App) handleSearchTranscripts(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
 
-	results, err := a.queryTranscripts(ctx, r.URL.Query())
+	queryData := parseQueryData(r.URL.Query())
+	results, err := a.queryTranscripts(ctx, queryData)
 	if err != nil {
-		slog.Error("failed to query transcripts", "params", r.URL.Query(), "err", err)
+		slog.Error("failed to query transcripts", "params", queryData, "err", err)
 		Http500Errors.Inc()
 		writeError(w, http.StatusInternalServerError, "Failed to search transcripts")
 		return
@@ -170,13 +174,16 @@ func (a *App) handleGetGraphByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := r.URL.Query()
-	searchText := query.Get("searchText")
-	matchWholeWord, _ := strconv.ParseBool(query.Get("matchWholeWord"))
+	queryData := parseQueryData(r.URL.Query())
+	if queryData.SearchText == "" {
+		Http400Errors.Inc()
+		writeError(w, http.StatusBadRequest, "Search text is required")
+		return
+	}
 
-	graphData, err := a.querySingleGraph(ctx, id, searchText, matchWholeWord)
+	graphData, err := a.querySingleGraph(ctx, id, queryData)
 	if err != nil {
-		slog.Error("failed to query single graph", "id", id, "err", err)
+		slog.Error("failed to query single graph", "id", id, "params", queryData, "err", err)
 		Http500Errors.Inc()
 		writeError(w, http.StatusInternalServerError, "Failed to get graph data")
 		return
@@ -194,9 +201,16 @@ func (a *App) handleGetGraphAll(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
 
-	graphData, err := a.queryAllGraphs(ctx, r.URL.Query())
+	queryData := parseQueryData(r.URL.Query())
+	if queryData.SearchText == "" {
+		Http400Errors.Inc()
+		writeError(w, http.StatusBadRequest, "Search text is required")
+		return
+	}
+
+	graphData, err := a.queryAllGraphs(ctx, queryData)
 	if err != nil {
-		slog.Error("failed to query all graphs", "params", r.URL.Query(), "err", err)
+		slog.Error("failed to query all graphs", "params", queryData, "err", err)
 		Http500Errors.Inc()
 		writeError(w, http.StatusInternalServerError, "Failed to get graph data")
 		return
@@ -263,7 +277,9 @@ func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Use PingContext to respect request timeouts/cancellations
 	if err := a.db.PingContext(ctx); err != nil {
-		http.Error(w, `{"status":"error","db_error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		Http500Errors.Inc()
+		slog.Error("failed to ping database", "err", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusOK)

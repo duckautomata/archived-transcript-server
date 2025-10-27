@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -126,7 +125,7 @@ func (a *App) insertTranscript(ctx context.Context, data *TranscriptInput) error
 }
 
 // retrieveTranscript now accepts a context
-func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutput, error) {
+func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutput, bool, error) {
 	var output TranscriptOutput
 
 	// Retrieve transcript metadata
@@ -136,16 +135,16 @@ func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutp
 	)
 	err := row.Scan(&output.ID, &output.Streamer, &output.Date, &output.StreamTitle, &output.StreamType)
 	if err == sql.ErrNoRows {
-		return TranscriptOutput{}, fmt.Errorf("transcript with id '%s' not found", id)
+		return TranscriptOutput{}, true, fmt.Errorf("transcript with id '%s' not found", id)
 	}
 	if err != nil {
-		return TranscriptOutput{}, fmt.Errorf("failed to retrieve transcript metadata: %w", err)
+		return TranscriptOutput{}, false, fmt.Errorf("failed to retrieve transcript metadata: %w", err)
 	}
 
 	// Retrieve all lines for the transcript, ordered by time.
 	rows, err := a.db.QueryContext(ctx, "SELECT start_time, text FROM transcript_lines WHERE transcript_id = ? ORDER BY start_time", id) // Use QueryContext
 	if err != nil {
-		return TranscriptOutput{}, fmt.Errorf("failed to query transcript lines: %w", err)
+		return TranscriptOutput{}, false, fmt.Errorf("failed to query transcript lines: %w", err)
 	}
 	defer rows.Close()
 
@@ -154,7 +153,7 @@ func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutp
 	for rows.Next() {
 		var line TranscriptLine
 		if err := rows.Scan(&line.Start, &line.Text); err != nil {
-			return TranscriptOutput{}, fmt.Errorf("failed to scan transcript line: %w", err)
+			return TranscriptOutput{}, false, fmt.Errorf("failed to scan transcript line: %w", err)
 		}
 		line.ID = fmt.Sprintf("%d", lineId)
 		lineId++
@@ -162,11 +161,11 @@ func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutp
 	}
 
 	if err := rows.Err(); err != nil {
-		return TranscriptOutput{}, fmt.Errorf("error during rows iteration: %w", err)
+		return TranscriptOutput{}, false, fmt.Errorf("error during rows iteration: %w", err)
 	}
 
 	output.TranscriptLines = lines
-	return output, nil
+	return output, false, nil
 }
 
 // retrieveTranscript now accepts a context
@@ -190,23 +189,18 @@ func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMeta
 }
 
 // queryTranscripts already uses context, so no changes were needed here.
-func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSearchOutput, error) {
-
-	// --- 1. Get ALL parameters first ---
-	searchText := q.Get("searchText")
-	matchWholeWord := q.Get("matchWholeWord") == "true"
-
+func (a *App) queryTranscripts(ctx context.Context, queryData QueryData) (TranscriptSearchOutput, error) {
 	// --- Build Metadata Query (unchanged from previous version) ---
 	var qParams strings.Builder
 	var sqlArgs []any
-	buildFilterQuery(&qParams, &sqlArgs, q) // Builds WHERE clause for filters
+	buildFilterQuery(&qParams, &sqlArgs, queryData) // Builds WHERE clause for filters
 
 	var query strings.Builder
 	query.WriteString("SELECT t.id, t.streamer, t.date, t.title, t.stream_type FROM transcripts t")
 
 	var ftsQuery string
-	if searchText != "" {
-		ftsQuery = buildFTSQuery(searchText) // Creates `"clean search text"`
+	if queryData.SearchText != "" {
+		ftsQuery = buildFTSQuery(queryData.SearchText) // Creates `"clean search text"`
 		query.WriteString(`
 			JOIN transcript_lines tl ON t.id = tl.transcript_id
 			JOIN transcript_search ts ON tl.rowid = ts.rowid
@@ -216,7 +210,7 @@ func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSea
 	}
 
 	query.WriteString(qParams.String())
-	if searchText != "" {
+	if queryData.SearchText != "" {
 		query.WriteString(" GROUP BY t.id")
 	}
 	query.WriteString(" ORDER BY t.date DESC")
@@ -250,7 +244,7 @@ func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSea
 	}
 
 	// --- 2. If searchText was provided, run ONE query for all contexts ---
-	if searchText != "" {
+	if queryData.SearchText != "" {
 		inQuery := strings.Repeat("?,", len(idArgs)-1) + "?"
 
 		// --- Build the context query dynamically ---
@@ -272,8 +266,8 @@ func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSea
 		`) // Note: inQuery will be interpolated later
 
 		var wholeWordRegexPattern string
-		if matchWholeWord {
-			wholeWordRegexPattern = `(?i)\b` + regexp.QuoteMeta(searchText) + `\b`
+		if queryData.MatchWholeWord {
+			wholeWordRegexPattern = `(?i)\b` + regexp.QuoteMeta(queryData.SearchText) + `\b`
 			contextQuery.WriteString(" AND regexp(?, tl.text)") // Add regexp check
 		}
 
@@ -291,7 +285,7 @@ func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSea
 		contextSqlArgs := make([]any, 0, 2+len(idArgs))
 		contextSqlArgs = append(contextSqlArgs, ftsQuery)  // FTS query text
 		contextSqlArgs = append(contextSqlArgs, idArgs...) // Transcript IDs
-		if matchWholeWord {
+		if queryData.MatchWholeWord {
 			contextSqlArgs = append(contextSqlArgs, wholeWordRegexPattern) // Regexp pattern (optional)
 		}
 
@@ -327,7 +321,7 @@ func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSea
 
 	// If we performed a strict whole word search, remove transcripts
 	// that had metadata matches but no actual whole word context matches.
-	if matchWholeWord && searchText != "" {
+	if queryData.MatchWholeWord && queryData.SearchText != "" {
 		filteredResultsList := make([]*TranscriptSearch, 0, len(resultsList)) // Pre-allocate capacity
 		for _, res := range resultsList {
 			// Keep the transcript only if it has contexts
@@ -342,12 +336,12 @@ func (a *App) queryTranscripts(ctx context.Context, q url.Values) (TranscriptSea
 }
 
 // querySingleGraph now accepts a context
-func (a *App) querySingleGraph(ctx context.Context, id string, searchText string, matchWholeWord bool) (GraphOutput, error) {
-	searchRe, err := a.getRegex(searchText, matchWholeWord)
+func (a *App) querySingleGraph(ctx context.Context, id string, queryData QueryData) (GraphOutput, error) {
+	searchRe, err := a.getRegex(queryData.SearchText, queryData.MatchWholeWord)
 	if err != nil {
 		return GraphOutput{}, fmt.Errorf("failed to compile regex: %w", err)
 	}
-	ftsQuery := buildFTSQuery(searchText)
+	ftsQuery := buildFTSQuery(queryData.SearchText)
 
 	query := `
 		SELECT tl.start_time, tl.clean_text
@@ -387,25 +381,18 @@ func (a *App) querySingleGraph(ctx context.Context, id string, searchText string
 }
 
 // queryAllGraphs now accepts a context
-func (a *App) queryAllGraphs(ctx context.Context, q url.Values) (GraphOutput, error) {
-	// --- Search Criteria ---
-	searchText := q.Get("searchText")
-	if searchText == "" {
-		return GraphOutput{}, fmt.Errorf("missing 'searchText' query parameter")
-	}
-	matchWholeWord := q.Get("matchWholeWord") == "true"
-
+func (a *App) queryAllGraphs(ctx context.Context, queryData QueryData) (GraphOutput, error) {
 	// --- Get Regex for counting ---
-	searchRe, err := a.getRegex(searchText, matchWholeWord)
+	searchRe, err := a.getRegex(queryData.SearchText, queryData.MatchWholeWord)
 	if err != nil {
 		return GraphOutput{}, fmt.Errorf("failed to compile regex: %w", err)
 	}
-	ftsQuery := buildFTSQuery(searchText)
+	ftsQuery := buildFTSQuery(queryData.SearchText)
 
 	// --- Filter Criteria (same as /transcripts) ---
 	var qParams strings.Builder
 	var sqlArgs []any
-	buildFilterQuery(&qParams, &sqlArgs, q)
+	buildFilterQuery(&qParams, &sqlArgs, queryData)
 
 	// --- Build the main query ---
 	var query strings.Builder
