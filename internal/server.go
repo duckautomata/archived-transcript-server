@@ -108,10 +108,6 @@ func (a *App) handlePostTranscript(w http.ResponseWriter, r *http.Request) {
 
 // handleGetTranscript returns a single transcript's formatted lines.
 func (a *App) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
-	Http500Errors.Inc()
-	writeError(w, http.StatusNotFound, "Failed to retrieve transcript")
-	return
-
 	startTime := time.Now()
 	ctx := r.Context()
 	id := r.PathValue("id")
