@@ -3,8 +3,9 @@
 # By default, it will grab config.yaml
 ####################################################################
 
+# Use command to generate creds
+# openssl rand -base64 32
 credentials:
-  # credentials must exclude %:/\`'"
   # credentials used to restrict who can upload transcripts
   upload: ""
   # credentials used to restrict who can use membership transcripts

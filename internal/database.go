@@ -73,26 +73,28 @@ func (a *App) InitDB() error {
 
 // insertTranscript now accepts a context
 func (a *App) insertTranscript(ctx context.Context, data *TranscriptInput) error {
-	// We delete the old one (if it exists) and insert the new one.
-	// The ON DELETE CASCADE in the schema handles child `transcript_lines`
-	// and the triggers handle the FTS table.
-
-	// The request mentions that inserting with an existing ID should replace the old data.
 	// Using a transaction ensures this is an atomic operation.
-	tx, err := a.db.BeginTx(ctx, nil) // Use BeginTx
+	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// 1. Delete existing transcript (which cascades to lines and FTS)
-	_, err = tx.ExecContext(ctx, "DELETE FROM transcripts WHERE id = ?", data.ID) // Use ExecContext
+	// 1. Manually delete transcript lines first.
+	// Explicit deletion also ensures the FTS triggers fire to clean up the search index.
+	_, err = tx.ExecContext(ctx, "DELETE FROM transcript_lines WHERE transcript_id = ?", data.ID)
+	if err != nil {
+		return fmt.Errorf("failed to delete existing transcript lines: %w", err)
+	}
+
+	// 2. Delete existing transcript metadata
+	_, err = tx.ExecContext(ctx, "DELETE FROM transcripts WHERE id = ?", data.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete existing transcript: %w", err)
 	}
 
-	// 2. Insert new transcript metadata
-	_, err = tx.ExecContext(ctx, "INSERT INTO transcripts (id, streamer, date, title, stream_type) VALUES (?, ?, ?, ?, ?)", // Use ExecContext
+	// 3. Insert new transcript metadata
+	_, err = tx.ExecContext(ctx, "INSERT INTO transcripts (id, streamer, date, title, stream_type) VALUES (?, ?, ?, ?, ?)",
 		data.ID, data.Streamer, data.Date, data.StreamTitle, data.StreamType)
 	if err != nil {
 		return fmt.Errorf("failed to insert new transcript metadata: %w", err)
@@ -106,7 +108,7 @@ func (a *App) insertTranscript(ctx context.Context, data *TranscriptInput) error
 	}
 
 	// Prepare statement for efficient bulk insertion of transcript lines.
-	stmt, err := tx.PrepareContext(ctx, "INSERT INTO transcript_lines (transcript_id, start_time, text, clean_text) VALUES (?, ?, ?, ?)") // Use PrepareContext
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO transcript_lines (transcript_id, start_time, text, clean_text) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement for lines: %w", err)
 	}
@@ -114,7 +116,7 @@ func (a *App) insertTranscript(ctx context.Context, data *TranscriptInput) error
 
 	for _, line := range lines {
 		cleanText := normalizeText(line.Text)
-		_, err := stmt.ExecContext(ctx, data.ID, line.Start, line.Text, cleanText) // Use ExecContext
+		_, err := stmt.ExecContext(ctx, data.ID, line.Start, line.Text, cleanText)
 		if err != nil {
 			return fmt.Errorf("failed to insert transcript line: %w", err)
 		}
