@@ -8,7 +8,11 @@ RUN apk add --no-cache gcc libc-dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build --tags "fts5" -o ./bin/main -ldflags="-w -s" ./cmd/web
+
+# Add ARGs for build time variables
+ARG VERSION=dev
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=1 GOOS=linux go build --tags "fts5" -o ./bin/main -ldflags="-w -s -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" ./cmd/web
 
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates tzdata

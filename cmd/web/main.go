@@ -17,6 +17,12 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
+// To be set via ldflags
+var (
+	Version   = "local"
+	BuildTime = "unknown"
+)
+
 func main() {
 	// --- Logging Setup ---
 	if err := os.MkdirAll("tmp", 0755); err != nil {
@@ -35,6 +41,8 @@ func main() {
 	defer logFile.Close()
 
 	internal.SetupLogging(logFile)
+
+	slog.Info("server starting up", "version", Version, "build_time", BuildTime)
 
 	// --- Database Setup ---
 	// Use WAL mode for high read concurrency
