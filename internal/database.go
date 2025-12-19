@@ -190,6 +190,30 @@ func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMeta
 	return output, false, nil
 }
 
+// retrieveAllStreams retrieves all available streams in the database.
+func (a *App) retrieveAllStreams(ctx context.Context) ([]StreamMetadataOutput, error) {
+	rows, err := a.db.QueryContext(ctx, "SELECT id, streamer, date, title, stream_type FROM transcripts ORDER BY date DESC")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all streams: %w", err)
+	}
+	defer rows.Close()
+
+	var results []StreamMetadataOutput
+	for rows.Next() {
+		var s StreamMetadataOutput
+		if err := rows.Scan(&s.ID, &s.Streamer, &s.Date, &s.StreamTitle, &s.StreamType); err != nil {
+			return nil, fmt.Errorf("failed to scan stream metadata: %w", err)
+		}
+		results = append(results, s)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
 // queryTranscripts already uses context, so no changes were needed here.
 func (a *App) queryTranscripts(ctx context.Context, queryData QueryData) (TranscriptSearchOutput, error) {
 	// --- Build Metadata Query (unchanged from previous version) ---

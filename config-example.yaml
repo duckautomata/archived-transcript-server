@@ -3,10 +3,14 @@
 # By default, it will grab config.yaml
 ####################################################################
 
+# credential used to restrict who can upload transcripts
 # Use command to generate creds
 # openssl rand -base64 32
-credentials:
-  # credentials used to restrict who can upload transcripts
-  upload: ""
-  # credentials used to restrict who can use membership transcripts
-  membership: ""
+api_key: ""
+  
+# List of channels that will have membership transcripts available. Channel names must exactly match the Channel name that was used to upload the transcript / is in the database.
+# Each channel will have its own API key that is auto generated, auto expire after 45 days, and have a url to manually generate a new one.
+# Any channel not in this list will not be able to access its membership transcripts.
+membership:
+  - Channel1
+  - Channel2

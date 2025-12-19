@@ -17,6 +17,7 @@ func (a *App) InitServerEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("GET /graph/{id}", a.handleGetGraphByID)
 	mux.HandleFunc("GET /stream/{id}", a.handleGetStreamMetadata)
 	mux.HandleFunc("GET /graph", a.handleGetGraphAll)
+	mux.HandleFunc("GET /info", a.handleGetInfo)
 	mux.HandleFunc("GET /statuscheck", a.handleStatusCheck)
 	mux.HandleFunc("GET /healthcheck", a.handleHealthCheck)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -24,12 +25,12 @@ func (a *App) InitServerEndpoints(mux *http.ServeMux) {
 
 func (a *App) apiKeyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.config.Credentials.Upload == "" {
+		if a.config.APIKey == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		key := r.Header.Get("X-API-Key")
-		if key != a.config.Credentials.Upload {
+		if key != a.config.APIKey {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -249,6 +250,24 @@ func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 	TotalRequests.Inc()
 	GetStreamMetadataRequests.Inc()
 	writeJSON(w, streamhData)
+}
+
+// handleGetInfo returns a list of all streams.
+func (a *App) handleGetInfo(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	ctx := r.Context()
+
+	results, err := a.retrieveAllStreams(ctx)
+	if err != nil {
+		slog.Error("failed to retrieve all streams", "err", err)
+		Http500Errors.Inc()
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve streams")
+		return
+	}
+
+	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	TotalRequests.Inc()
+	writeJSON(w, results)
 }
 
 // handleStatusCheck returns the total number of transcripts.

@@ -8,10 +8,8 @@ import (
 )
 
 type Config struct {
-	Credentials struct {
-		Upload     string `yaml:"upload"`
-		Membership string `yaml:"membership"`
-	} `yaml:"credentials"`
+	APIKey     string   `yaml:"api_key"`
+	Membership []string `yaml:"membership"`
 }
 
 func GetConfig() (Config, error) {
