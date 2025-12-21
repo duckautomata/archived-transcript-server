@@ -214,6 +214,13 @@ func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (metadataOu
 		return StreamMetadataOutput{}, false, fmt.Errorf("failed to retrieve stream metadata: %w", err)
 	}
 
+	// Check Access
+	authorizedChannel, ok := ctx.Value(AuthorizedChannelKey).(string)
+	if output.StreamType == "Members" && (output.Streamer != authorizedChannel || !ok) {
+		// Trying to access a members stream with the wrong authorized channel, or an invalid key. Mask as 404
+		return StreamMetadataOutput{}, true, fmt.Errorf("stream with id '%s' not found", id)
+	}
+
 	return output, false, nil
 }
 

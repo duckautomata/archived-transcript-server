@@ -21,13 +21,13 @@ func (a *App) InitServerEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("GET /membership", a.apiKeyMiddleware(a.handleGetAllMembershipKeys))
 
 	// Public routes
-	mux.HandleFunc("GET /stream/{id}", a.handleGetStreamMetadata)
 	mux.HandleFunc("GET /info", a.handleGetInfo)
 	mux.HandleFunc("GET /statuscheck", a.handleStatusCheck)
 	mux.HandleFunc("GET /healthcheck", a.handleHealthCheck)
 	mux.Handle("/metrics", promhttp.Handler())
 
 	// Membership protected public routes (only the members transcript is protected)
+	mux.HandleFunc("GET /stream/{id}", a.membershipMiddleware(a.handleGetStreamMetadata))
 	mux.HandleFunc("GET /transcript/{id}", a.membershipMiddleware(a.handleGetTranscript))
 	mux.HandleFunc("GET /transcripts", a.membershipMiddleware(a.handleSearchTranscripts))
 	mux.HandleFunc("GET /graph/{id}", a.membershipMiddleware(a.handleGetGraphByID))
@@ -260,7 +260,7 @@ func (a *App) handleGetGraphAll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, graphData)
 }
 
-// Returns the metadata for a single stream. Open
+// Returns the metadata for a single stream. Membership is protected.
 func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()

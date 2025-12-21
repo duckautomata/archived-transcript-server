@@ -137,6 +137,12 @@ func TestMembershipVerification(t *testing.T) {
 	// --- 1. Access (No Key) ---
 	t.Log("[1] Testing Access (No Key)")
 
+	// Stream Info
+	checkStatus(host+"/stream/eeb65mIOpfs", "", http.StatusNotFound) // TestStreamer Members
+	checkStatus(host+"/stream/5jvNKUzrI4Q", "", http.StatusOK)       // TestStreamer Public
+	checkStatus(host+"/stream/eI8e0eDfmQs", "", http.StatusNotFound) // OtherStreamer Members
+	checkStatus(host+"/stream/IVcjM0mQD64", "", http.StatusOK)       // OtherStreamer Public
+
 	// Transcripts
 	checkStatus(host+"/transcript/eeb65mIOpfs", "", http.StatusNotFound) // TestStreamer Members
 	checkStatus(host+"/transcript/5jvNKUzrI4Q", "", http.StatusOK)       // TestStreamer Public
@@ -211,6 +217,12 @@ func TestMembershipVerification(t *testing.T) {
 
 	// --- 4. Testing Access with Key ---
 	t.Log("[4] Testing Access with TestStreamer Key")
+
+	// Transcripts
+	checkStatus(host+"/stream/eeb65mIOpfs", testKey, http.StatusOK)       // TestStreamer Members (Allowed)
+	checkStatus(host+"/stream/5jvNKUzrI4Q", testKey, http.StatusOK)       // TestStreamer Public (Allowed)
+	checkStatus(host+"/stream/eI8e0eDfmQs", testKey, http.StatusNotFound) // OtherStreamer Members (Denied) - Cross Channel
+	checkStatus(host+"/stream/IVcjM0mQD64", testKey, http.StatusOK)       // OtherStreamer Public (Allowed)
 
 	// Transcripts
 	checkStatus(host+"/transcript/eeb65mIOpfs", testKey, http.StatusOK)       // TestStreamer Members (Allowed)
@@ -296,6 +308,12 @@ func TestMembershipVerification(t *testing.T) {
 	t.Log("[8] Testing Access with deleted key")
 
 	// Should behave like unauthorized
+	checkStatus(host+"/stream/eeb65mIOpfs", testKey, http.StatusNotFound) // TestStreamer Members (Denied)
+	checkStatus(host+"/stream/5jvNKUzrI4Q", testKey, http.StatusOK)       // TestStreamer Public (Allowed)
+	checkStatus(host+"/stream/eI8e0eDfmQs", testKey, http.StatusNotFound) // OtherStreamer Members (Denied) - Cross Channel
+	checkStatus(host+"/stream/IVcjM0mQD64", testKey, http.StatusOK)       // OtherStreamer Public (Allowed)
+
+	// Transcript
 	checkStatus(host+"/transcript/eeb65mIOpfs", testKey, http.StatusNotFound) // TestStreamer Members (Denied)
 	checkStatus(host+"/transcript/5jvNKUzrI4Q", testKey, http.StatusOK)       // TestStreamer Public (Allowed)
 	checkStatus(host+"/transcript/eI8e0eDfmQs", testKey, http.StatusNotFound) // OtherStreamer Members (Denied) - Cross Channel
@@ -651,7 +669,7 @@ func TestStreamMetadataVisibility(t *testing.T) {
 	// 1. Verify /stream/{id} is public for Members stream (No Auth)
 	// Members Stream ID: eeb65mIOpfs (from seedTestData)
 	t.Log("[1] Checking /stream/{id} for Members stream (No Auth)")
-	checkStatus(host+"/stream/eeb65mIOpfs", http.StatusOK)
+	checkStatus(host+"/stream/eeb65mIOpfs", http.StatusNotFound)
 
 	// 2. Verify /stream/{id} is public for Public stream (No Auth)
 	// Public Stream ID: 5jvNKUzrI4Q
