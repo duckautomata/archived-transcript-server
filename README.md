@@ -35,6 +35,21 @@ All three programs work together to transcribe all streams/videos/content and al
 - Server (this) will receive `.srt` files from Data and store them into a database. Upon request from the Client, it will search through the data base and return the requested data.
 - Client is the UI that renders the transcript for us to use.
 
+### How members transcripts work and are protected
+
+Any transcript with the "Members" stream type will be treated as protected. This means that, by default, it will be excluded from retrieval, search results, and graph data.
+
+To use members transcripts, the request will need the `X-Membership-Key` header set to the correct value. Each channel will have its own membership key. This means you can't search two channels membership transcripts at the same time.
+
+Only channels specified in the config will have keys. On startup, keys will be generated for any channel in the config that don't have a key. A channel can only have two active keys at a time. If a new key is generated, the oldest key will be removed. Keys have a ttl and will auto expire after ttl days have passed. TTL is set in the config and will auto apply to every key when it changes.
+
+API usage:
+- GET `/membership/{channelName}` will return all membership keys for the channel.
+- POST `/membership/{channelName}` will generate a new membership key for the channel and return it.
+- DELETE `/membership/{channelName}` will delete all membership keys for the channel.
+- GET `/membership` will return all membership keys for all channels.
+- GET `/membership/verify` will verify the membership key in the `X-Membership-Key` header and return the channel name associated with it. Return 401 if invalid.
+
 ## Development
 
 ### Tech Used
@@ -54,6 +69,15 @@ All three programs work together to transcribe all streams/videos/content and al
 5. Download dependencies `go mod download`
 
 When all of that is done, you can run `scripts/run.sh` (or just `go run ./cmd/web/` from the root directory) to start archived-transcript-server.
+
+### Testing
+
+Tests use the tparse tool to display results. You can install it with `go install github.com/mfridman/tparse@latest`. But it is not required.
+
+`./scripts/test.sh` will run all tests inside the `internal/` folder.
+`./scripts/cover.sh` will run all tests and generate a coverage html report.
+
+Tests should be run before every commit.
 
 ### Debugging/Logging
 

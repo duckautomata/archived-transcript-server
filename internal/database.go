@@ -8,9 +8,22 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mattn/go-sqlite3"
 )
 
-// initDB creates the necessary tables and FTS5 virtual table
+// Registers the SQLite driver with regex support. Called automatically on import.
+func init() {
+	sql.Register("sqlite3_with_regex", &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return conn.RegisterFunc("regexp", func(re, s string) (bool, error) {
+				return regexp.MatchString(re, s)
+			}, true)
+		},
+	})
+}
+
+// Creates the necessary tables and FTS5 virtual table
 func (a *App) InitDB() error {
 	// For initialization, we use context.Background() as it's not
 	// tied to a specific request.
@@ -61,6 +74,12 @@ func (a *App) InitDB() error {
 		INSERT INTO transcript_search(transcript_search, rowid, clean_text) VALUES ('delete', old.rowid, old.clean_text);
 		INSERT INTO transcript_search(rowid, clean_text) VALUES (new.rowid, new.clean_text);
 	END;
+
+	CREATE TABLE IF NOT EXISTS membership_keys (
+		key TEXT PRIMARY KEY,
+		channel TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
 	`
 
 	_, err = tx.ExecContext(ctx, schema) // Use ExecContext
@@ -71,7 +90,7 @@ func (a *App) InitDB() error {
 	return tx.Commit()
 }
 
-// insertTranscript now accepts a context
+// Inserts a transcript into the database. Overwrites any existing transcript with the same ID.
 func (a *App) insertTranscript(ctx context.Context, data *TranscriptInput) error {
 	// Using a transaction ensures this is an atomic operation.
 	tx, err := a.db.BeginTx(ctx, nil)
@@ -126,21 +145,27 @@ func (a *App) insertTranscript(ctx context.Context, data *TranscriptInput) error
 	return tx.Commit()
 }
 
-// retrieveTranscript now accepts a context
-func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutput, bool, error) {
-	var output TranscriptOutput
-
-	// Retrieve transcript metadata
-	row := a.db.QueryRowContext(ctx, // Use QueryRowContext
+// Retrieves a transcript from the database with the given ID.
+// notFound and err are used to differentiate between a 400 and 500 error.
+// notFound && err -> 404 | !notFound && err -> 500 | !notFound && !err -> 200
+func (a *App) retrieveTranscript(ctx context.Context, id string) (transcriptOutput TranscriptOutput, notFound bool, err error) {
+	row := a.db.QueryRowContext(ctx,
 		"SELECT id, streamer, date, title, stream_type FROM transcripts WHERE id = ?",
 		id,
 	)
-	err := row.Scan(&output.ID, &output.Streamer, &output.Date, &output.StreamTitle, &output.StreamType)
+	err = row.Scan(&transcriptOutput.ID, &transcriptOutput.Streamer, &transcriptOutput.Date, &transcriptOutput.StreamTitle, &transcriptOutput.StreamType)
 	if err == sql.ErrNoRows {
 		return TranscriptOutput{}, true, fmt.Errorf("transcript with id '%s' not found", id)
 	}
 	if err != nil {
 		return TranscriptOutput{}, false, fmt.Errorf("failed to retrieve transcript metadata: %w", err)
+	}
+
+	// Check Access
+	authorizedChannel, ok := ctx.Value(AuthorizedChannelKey).(string)
+	if transcriptOutput.StreamType == "Members" && (transcriptOutput.Streamer != authorizedChannel || !ok) {
+		// Trying to access a members transcript with the wrong authorized channel, or an invalid key. Mask as 404
+		return TranscriptOutput{}, true, fmt.Errorf("transcript with id '%s' not found", id)
 	}
 
 	// Retrieve all lines for the transcript, ordered by time.
@@ -166,12 +191,14 @@ func (a *App) retrieveTranscript(ctx context.Context, id string) (TranscriptOutp
 		return TranscriptOutput{}, false, fmt.Errorf("error during rows iteration: %w", err)
 	}
 
-	output.TranscriptLines = lines
-	return output, false, nil
+	transcriptOutput.TranscriptLines = lines
+	return transcriptOutput, false, nil
 }
 
-// retrieveTranscript now accepts a context
-func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMetadataOutput, bool, error) {
+// Retrieves a stream's metadata from the database with the given ID.
+// notFound and err are used to differentiate between a 400 and 500 error.
+// notFound && err -> 404 | !notFound && err -> 500 | !notFound && !err -> 200
+func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (metadataOutput StreamMetadataOutput, notFound bool, err error) {
 	var output StreamMetadataOutput
 
 	// Retrieve transcript metadata
@@ -179,7 +206,7 @@ func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMeta
 		"SELECT id, streamer, date, title, stream_type FROM transcripts WHERE id = ?",
 		id,
 	)
-	err := row.Scan(&output.ID, &output.Streamer, &output.Date, &output.StreamTitle, &output.StreamType)
+	err = row.Scan(&output.ID, &output.Streamer, &output.Date, &output.StreamTitle, &output.StreamType)
 	if err == sql.ErrNoRows {
 		return StreamMetadataOutput{}, true, fmt.Errorf("stream with id '%s' not found", id)
 	}
@@ -190,7 +217,7 @@ func (a *App) retrieveStreamMetadata(ctx context.Context, id string) (StreamMeta
 	return output, false, nil
 }
 
-// retrieveAllStreams retrieves all available streams in the database.
+// Retrieves all available streams in the database.
 func (a *App) retrieveAllStreams(ctx context.Context) ([]StreamMetadataOutput, error) {
 	rows, err := a.db.QueryContext(ctx, "SELECT id, streamer, date, title, stream_type FROM transcripts ORDER BY date DESC")
 	if err != nil {
@@ -214,9 +241,12 @@ func (a *App) retrieveAllStreams(ctx context.Context) ([]StreamMetadataOutput, e
 	return results, nil
 }
 
-// queryTranscripts already uses context, so no changes were needed here.
+// Retrieves a list of screams and a list of contexts that matches the query based on the given query data.
+// Contexts are empty if searchText is empty.
 func (a *App) queryTranscripts(ctx context.Context, queryData QueryData) (TranscriptSearchOutput, error) {
-	// --- Build Metadata Query (unchanged from previous version) ---
+	// 1. Grab all the streams that match the query, ignoring searchText. Part 2 will refine the results based on searchText. This is done to avoid searching unnecessary streams.
+
+	// --- Build Metadata Query ---
 	var qParams strings.Builder
 	var sqlArgs []any
 	buildFilterQuery(&qParams, &sqlArgs, queryData) // Builds WHERE clause for filters
@@ -241,6 +271,7 @@ func (a *App) queryTranscripts(ctx context.Context, queryData QueryData) (Transc
 	}
 	query.WriteString(" ORDER BY t.date DESC")
 
+	// --- Execute Metadata Query ---
 	rows, err := a.db.QueryContext(ctx, query.String(), sqlArgs...)
 	if err != nil {
 		return TranscriptSearchOutput{}, fmt.Errorf("failed to query transcripts metadata: %w", err)
@@ -269,7 +300,9 @@ func (a *App) queryTranscripts(ctx context.Context, queryData QueryData) (Transc
 		return TranscriptSearchOutput{Result: resultsList}, nil
 	}
 
-	// --- 2. If searchText was provided, run ONE query for all contexts ---
+	// 2. Create a single query to fetch all the contexts for every stream found in part 1.
+	// Also filter out any streams that don't have any contexts.
+
 	if queryData.SearchText != "" {
 		inQuery := strings.Repeat("?,", len(idArgs)-1) + "?"
 
@@ -361,7 +394,8 @@ func (a *App) queryTranscripts(ctx context.Context, queryData QueryData) (Transc
 	return TranscriptSearchOutput{Result: resultsList}, nil
 }
 
-// querySingleGraph now accepts a context
+// Retrieves a list of points of where the query matches in the transcript for the given ID.
+// x-axis: time "hh:mm:ss" | y-axis: number of matches
 func (a *App) querySingleGraph(ctx context.Context, id string, queryData QueryData) (GraphOutput, error) {
 	searchRe, err := a.getRegex(queryData.SearchText, queryData.MatchWholeWord)
 	if err != nil {
@@ -372,11 +406,23 @@ func (a *App) querySingleGraph(ctx context.Context, id string, queryData QueryDa
 	query := `
 		SELECT tl.start_time, tl.clean_text
 		FROM transcript_lines tl
+		JOIN transcripts t ON tl.transcript_id = t.id
 		JOIN transcript_search ts ON tl.rowid = ts.rowid
 		WHERE tl.transcript_id = ? AND ts.clean_text MATCH ?
-		ORDER BY tl.start_time
 	`
-	rows, err := a.db.QueryContext(ctx, query, id, ftsQuery) // Use QueryContext
+	args := []any{id, ftsQuery}
+
+	// Add restriction
+	query += " AND (t.stream_type != 'Members'"
+	if queryData.AuthorizedChannel != "" {
+		query += " OR (t.stream_type = 'Members' AND t.streamer = ?)"
+		args = append(args, queryData.AuthorizedChannel)
+	}
+	query += ")"
+
+	query += " ORDER BY tl.start_time"
+
+	rows, err := a.db.QueryContext(ctx, query, args...) // Use args...
 	if err != nil {
 		return GraphOutput{}, fmt.Errorf("failed to query graph data: %w", err)
 	}
@@ -406,7 +452,8 @@ func (a *App) querySingleGraph(ctx context.Context, id string, queryData QueryDa
 	return GraphOutput{Result: graphData}, nil
 }
 
-// queryAllGraphs now accepts a context
+// Retrieves a list of points of where the query matches in the transcript for all transcripts.
+// x-axis: date "YYYY-MM-DD" | y-axis: number of matches for that day
 func (a *App) queryAllGraphs(ctx context.Context, queryData QueryData) (GraphOutput, error) {
 	// --- Get Regex for counting ---
 	searchRe, err := a.getRegex(queryData.SearchText, queryData.MatchWholeWord)

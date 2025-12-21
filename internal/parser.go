@@ -1,16 +1,14 @@
 package internal
 
 import (
-	"bufio"
 	"fmt"
-	"net/url"
+	"net/http"
 	"regexp"
 	"strings"
 	"unicode"
 )
 
-// parseSRTForLines parses raw SRT content into a slice of TranscriptLine.
-// It's designed to be fast and handle common SRT format variations.
+// Parses raw SRT content into a slice of TranscriptLine.
 func parseSRTForLines(srtContent string) []TranscriptLine {
 	// Normalize line endings and trim whitespace
 	srtContent = strings.ReplaceAll(srtContent, "\r\n", "\n")
@@ -31,7 +29,7 @@ func parseSRTForLines(srtContent string) []TranscriptLine {
 		// parts[2] is the text content
 
 		// Get hh:mm:ss from "hh:mm:ss,ms --> ..."
-		if len(parts[1]) < 8 {
+		if len(parts[1]) < 8 || !strings.Contains(parts[1], "-->") || !unicode.IsDigit(rune(parts[1][0])) {
 			continue // Invalid timestamp line
 		}
 		startTime := parts[1][0:8]
@@ -50,19 +48,27 @@ func parseSRTForLines(srtContent string) []TranscriptLine {
 	return lines
 }
 
-func parseQueryData(q url.Values) QueryData {
+// Parses query parameters and the authorized channel from the request.
+func parseQueryData(r *http.Request) QueryData {
+	q := r.URL.Query()
+	authorizedChannel, ok := r.Context().Value(AuthorizedChannelKey).(string)
+	if !ok {
+		authorizedChannel = ""
+	}
+
 	return QueryData{
-		SearchText:     q.Get("searchText"),
-		MatchWholeWord: q.Get("matchWholeWord") == "true",
-		Streamer:       q.Get("streamer"),
-		StreamTitle:    q.Get("streamTitle"),
-		FromDate:       q.Get("fromDate"),
-		ToDate:         q.Get("toDate"),
-		StreamTypes:    q["streamType"],
+		SearchText:        q.Get("searchText"),
+		MatchWholeWord:    q.Get("matchWholeWord") == "true",
+		Streamer:          q.Get("streamer"),
+		StreamTitle:       q.Get("streamTitle"),
+		FromDate:          q.Get("fromDate"),
+		ToDate:            q.Get("toDate"),
+		StreamTypes:       q["streamType"],
+		AuthorizedChannel: authorizedChannel,
 	}
 }
 
-// buildFilterQuery dynamically builds the WHERE clause and arg list for filters.
+// Dynamically builds the WHERE clause and arg list for filters.
 func buildFilterQuery(qParams *strings.Builder, sqlArgs *[]any, queryData QueryData) {
 	qParams.WriteString(" WHERE 1=1")
 
@@ -93,9 +99,19 @@ func buildFilterQuery(qParams *strings.Builder, sqlArgs *[]any, queryData QueryD
 		}
 		fmt.Fprintf(qParams, " AND t.stream_type IN (%s)", placeholders.String())
 	}
+
+	// Enforce Membership restriction
+	// If AuthorizedChannel is set, allow Members streams for that channel.
+	// Otherwise (or for other channels), exclude Members streams.
+	qParams.WriteString(" AND (t.stream_type != 'Members'")
+	if queryData.AuthorizedChannel != "" {
+		qParams.WriteString(" OR (t.stream_type = 'Members' AND t.streamer = ?)")
+		*sqlArgs = append(*sqlArgs, queryData.AuthorizedChannel)
+	}
+	qParams.WriteString(")")
 }
 
-// getRegex memoizes compiled regexes for performance.
+// Memoizes compiled regexes for performance.
 func (a *App) getRegex(searchText string, matchWholeWord bool) (*regexp.Regexp, error) {
 	key := fmt.Sprintf("%t:%s", matchWholeWord, searchText)
 
@@ -125,13 +141,13 @@ func (a *App) getRegex(searchText string, matchWholeWord bool) (*regexp.Regexp, 
 	return newRe, nil
 }
 
-// buildFTSQuery formats a search string for FTS5.
+// Formats a search string for FTS5.
 func buildFTSQuery(searchText string) string {
 	cleanText := normalizeText(searchText)
 	return `"` + cleanText + `"`
 }
 
-// normalizeText cleans text for searching.
+// Cleans text for searching.
 func normalizeText(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -145,56 +161,8 @@ func normalizeText(s string) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-// parseSRT converts raw SRT text into structured TranscriptLines.
-func parseSRT(srtContent string) []TranscriptLine {
-	var lines []TranscriptLine
-	scanner := bufio.NewScanner(strings.NewReader(srtContent))
-
-	var currentLine TranscriptLine
-	var textBuilder strings.Builder
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if strings.Contains(line, " --> ") {
-			if textBuilder.Len() > 0 {
-				currentLine.Text = strings.TrimSpace(textBuilder.String())
-				lines = append(lines, currentLine)
-			}
-			textBuilder.Reset()
-			startTime := strings.Split(line, " --> ")[0]
-			if len(startTime) >= 8 {
-				startTime = startTime[:8]
-			}
-			currentLine = TranscriptLine{Start: startTime}
-			continue
-		}
-
-		if line == "" {
-			continue
-		}
-		if _, err := fmt.Sscan(line, new(int)); err == nil {
-			if textBuilder.Len() == 0 {
-				continue
-			}
-		}
-
-		if textBuilder.Len() > 0 {
-			textBuilder.WriteString(" ")
-		}
-		textBuilder.WriteString(line)
-	}
-
-	if textBuilder.Len() > 0 {
-		currentLine.Text = strings.TrimSpace(textBuilder.String())
-		lines = append(lines, currentLine)
-	}
-
-	return lines
-}
-
-// createSnippet finds the search text in the clean text, maps its word position
-// to the original text, and extracts a snippet with a word buffer.
+// Finds the search text in the clean text, maps its word position to the original text,
+// and extracts a snippet with a word buffer.
 func createSnippet(originalText, cleanText, searchText string, wordBuffer int) string {
 	originalWords := strings.Fields(originalText)
 	cleanWords := strings.Fields(cleanText)

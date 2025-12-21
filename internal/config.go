@@ -7,11 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type Config struct {
-	APIKey     string   `yaml:"api_key"`
-	Membership []string `yaml:"membership"`
-}
-
+// Retrieves the config from config.yaml
 func GetConfig() (Config, error) {
 	configFile := "config.yaml"
 	data, err := os.ReadFile(configFile)

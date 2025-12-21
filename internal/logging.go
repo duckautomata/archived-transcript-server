@@ -50,6 +50,7 @@ func (m *MultiHandler) WithGroup(name string) slog.Handler {
 	return NewMultiHandler(newHandlers...)
 }
 
+// Sets up logging to both console and file
 func SetupLogging(logFile *os.File) {
 	consoleHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

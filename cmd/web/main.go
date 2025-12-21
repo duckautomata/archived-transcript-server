@@ -4,17 +4,13 @@ import (
 	"archived-transcript-server/internal"
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"time"
-
-	"github.com/mattn/go-sqlite3"
 )
 
 // To be set via ldflags
@@ -48,26 +44,25 @@ func main() {
 	// Use WAL mode for high read concurrency
 	dbPath := filepath.Join("tmp", "transcripts.db")
 	dbSource := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)", dbPath)
-	connector := &sqliteConnectorWithRegexp{
-		dsn: dbSource,
-	}
-	db := sql.OpenDB(connector)
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
+
+	// Use the "sqlite3_with_regex" driver registered in internal/database.go
+	db, err := sql.Open("sqlite3_with_regex", dbSource)
 	if err != nil {
-		slog.Error("Failed to get initial connection for check", "func", "main", "err", err)
-		return
+		slog.Error("Failed to open database", "func", "main", "err", err)
+		os.Exit(1)
 	}
-	// Verify regexp works on this connection
+	defer db.Close()
+
+	// Verify connection and REGEXP support
+	ctx := context.Background()
 	var works bool
-	err = conn.QueryRowContext(ctx, "SELECT REGEXP('a', 'abc')").Scan(&works)
+	err = db.QueryRowContext(ctx, "SELECT REGEXP('a', 'abc')").Scan(&works)
 	if err != nil {
 		slog.Error("Failed to verify REGEXP function on initial connection", "func", "main", "err", err)
-		return
+		// We can choose to exit or continue, but if regex fails, search will break.
+		os.Exit(1)
 	}
-	conn.Close() // Release the test connection
 	slog.Info("Database opened and REGEXP function verified.", "func", "main", "path", dbSource)
-	defer db.Close()
 
 	// Set connection pool settings for performance
 	db.SetMaxOpenConns(25)
@@ -83,6 +78,11 @@ func main() {
 	if err != nil {
 		slog.Error("failed to initialize database", "func", "main", "err", err)
 		os.Exit(1)
+	}
+
+	// Ensure membership keys exist for configured channels
+	if err := app.EnsureMembershipKeys(ctx); err != nil {
+		slog.Error("failed to ensure membership keys", "func", "main", "err", err)
 	}
 
 	// --- Server Setup ---
@@ -103,50 +103,4 @@ func main() {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
 	}
-}
-
-type sqliteConnectorWithRegexp struct {
-	dsn string
-}
-
-func (c *sqliteConnectorWithRegexp) Connect(ctx context.Context) (driver.Conn, error) {
-	// Establish the base connection
-	baseConn, err := (&sqlite3.SQLiteDriver{}).Open(c.dsn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open base sqlite connection: %w", err)
-	}
-
-	// Get the underlying *sqlite3.SQLiteConn
-	sqliteConn := baseConn.(*sqlite3.SQLiteConn)
-
-	// Register the function on this specific connection
-	err = sqliteConn.RegisterFunc("REGEXP", regexpImpl, true)
-	if err != nil {
-		baseConn.Close() // Close connection if registration fails
-		return nil, fmt.Errorf("failed to register REGEXP function on new connection: %w", err)
-	}
-
-	// Return the connection (which is now driver.Conn compatible)
-	return baseConn, nil
-}
-
-func (c *sqliteConnectorWithRegexp) Driver() driver.Driver {
-	return &sqlite3.SQLiteDriver{}
-}
-
-func regexpImpl(pattern, s string) (bool, error) {
-	// Compile the regex pattern passed from SQL
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		// Log the error for visibility
-		slog.Error("Failed to compile regex in custom REGEXP function", "pattern", pattern, "err", err)
-		// Return false and NO error to SQL. SQL functions shouldn't usually return errors.
-		// Returning an error here might abort the whole SQL query.
-		return false, nil
-	}
-
-	// Perform the match
-	matched := re.MatchString(s)
-
-	return matched, nil // Return the boolean result and nil error
 }

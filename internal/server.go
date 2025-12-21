@@ -1,62 +1,102 @@
 package internal
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// Initializes all server endpoints and any protected middleware
 func (a *App) InitServerEndpoints(mux *http.ServeMux) {
-	mux.Handle("POST /transcript", a.apiKeyMiddleware(http.HandlerFunc(a.handlePostTranscript)))
-	mux.HandleFunc("GET /transcript/{id}", a.handleGetTranscript)
-	mux.HandleFunc("GET /transcripts", a.handleSearchTranscripts)
-	mux.HandleFunc("GET /graph/{id}", a.handleGetGraphByID)
+	// API Key protected routes
+	mux.HandleFunc("POST /transcript", a.apiKeyMiddleware(a.handlePostTranscript))
+	mux.HandleFunc("GET /membership/{channelName}", a.apiKeyMiddleware(a.handleGetMembershipKeys))
+	mux.HandleFunc("POST /membership/{channelName}", a.apiKeyMiddleware(a.handleCreateMembershipKey))
+	mux.HandleFunc("DELETE /membership/{channelName}", a.apiKeyMiddleware(a.handleDeleteMembershipKeys))
+	mux.HandleFunc("GET /membership", a.apiKeyMiddleware(a.handleGetAllMembershipKeys))
+
+	// Public routes
 	mux.HandleFunc("GET /stream/{id}", a.handleGetStreamMetadata)
-	mux.HandleFunc("GET /graph", a.handleGetGraphAll)
 	mux.HandleFunc("GET /info", a.handleGetInfo)
 	mux.HandleFunc("GET /statuscheck", a.handleStatusCheck)
 	mux.HandleFunc("GET /healthcheck", a.handleHealthCheck)
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// Membership protected public routes (only the members transcript is protected)
+	mux.HandleFunc("GET /transcript/{id}", a.membershipMiddleware(a.handleGetTranscript))
+	mux.HandleFunc("GET /transcripts", a.membershipMiddleware(a.handleSearchTranscripts))
+	mux.HandleFunc("GET /graph/{id}", a.membershipMiddleware(a.handleGetGraphByID))
+	mux.HandleFunc("GET /graph", a.membershipMiddleware(a.handleGetGraphAll))
+	mux.HandleFunc("GET /membership/verify", a.membershipMiddleware(a.handleVerifyMembershipKey))
 }
 
-func (a *App) apiKeyMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// Checks if the membership key is valid. If valid, injects the authorized channel into the request context
+// Continues if key is valid or invalid.
+//
+//	r.Context().Value(AuthorizedChannelKey) -> channel string, ok bool
+func (a *App) membershipMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-Membership-Key")
+		if key == "" {
+			next(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		channel, err := a.VerifyMembershipKey(ctx, key)
+		if err != nil {
+			slog.Error("failed to verify membership key", "key", key, "err", err)
+			next(w, r)
+			return
+		}
+		if channel == "" { // Invalid Key
+			next(w, r)
+			return
+		}
+
+		// Valid Key -> Inject AuthorizedChannel
+		ctx = context.WithValue(ctx, AuthorizedChannelKey, channel)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// Checks if the API key is valid. If invalid, returns 401.
+func (a *App) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if a.config.APIKey == "" {
-			next.ServeHTTP(w, r)
+			next(w, r)
 			return
 		}
 		key := r.Header.Get("X-API-Key")
 		if key != a.config.APIKey {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			http.Error(w, "Forbidden", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
+		next(w, r)
+	}
 }
 
-// corsMiddleware adds the necessary CORS headers to all responses.
+// Adds the necessary CORS headers to all responses.
+// Accepts any origin.
 func CorsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set the allowed origin.
-		// Use "*" for development to allow any origin.
-		// For production, you should lock this down to your frontend's domain:
-		// w.Header().Set("Access-Control-Allow-Origin", "http://your-frontend-domain.com")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
 		// Set the allowed methods
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 
 		// Set the allowed headers
-		// This is crucial for your X-API-Key and JSON POSTs
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Membership-Key, Authorization")
 
 		// Handle preflight OPTIONS requests
 		// This is sent by the browser to check permissions *before*
-		// sending the actual POST request with the X-API-Key.
+		// sending the actual request.
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -67,7 +107,7 @@ func CorsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// handlePostTranscript ingests a new transcript.
+// Adds the transcript to the database. Handles duplicate transcripts. Protected by API key.
 func (a *App) handlePostTranscript(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
@@ -107,7 +147,7 @@ func (a *App) handlePostTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok", "id": input.ID})
 }
 
-// handleGetTranscript returns a single transcript's formatted lines.
+// Returns a single transcript in json format. Membership is protected.
 func (a *App) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
@@ -139,12 +179,12 @@ func (a *App) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, transcript)
 }
 
-// handleSearchTranscripts performs a filtered search across transcripts.
+// Performs a filtered search across all transcripts. Membership is protected.
 func (a *App) handleSearchTranscripts(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
 
-	queryData := parseQueryData(r.URL.Query())
+	queryData := parseQueryData(r)
 	results, err := a.queryTranscripts(ctx, queryData)
 	if err != nil {
 		slog.Error("failed to query transcripts", "params", queryData, "err", err)
@@ -160,7 +200,7 @@ func (a *App) handleSearchTranscripts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, results)
 }
 
-// handleGetGraphByID returns time-frequency data for one transcript.
+// Returns time-frequency data for one transcript based on the query parameters. Membership is protected.
 func (a *App) handleGetGraphByID(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
@@ -171,7 +211,7 @@ func (a *App) handleGetGraphByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queryData := parseQueryData(r.URL.Query())
+	queryData := parseQueryData(r)
 	if queryData.SearchText == "" {
 		Http400Errors.Inc()
 		writeError(w, http.StatusBadRequest, "Search text is required")
@@ -193,12 +233,12 @@ func (a *App) handleGetGraphByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, graphData)
 }
 
-// handleGetGraphAll returns date-frequency data across all filtered transcripts.
+// Returns date-frequency data across all filtered transcripts. Membership is protected.
 func (a *App) handleGetGraphAll(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
 
-	queryData := parseQueryData(r.URL.Query())
+	queryData := parseQueryData(r)
 	if queryData.SearchText == "" {
 		Http400Errors.Inc()
 		writeError(w, http.StatusBadRequest, "Search text is required")
@@ -220,7 +260,7 @@ func (a *App) handleGetGraphAll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, graphData)
 }
 
-// handleStatusCheck returns the total number of transcripts.
+// Returns the metadata for a single stream. Open
 func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
@@ -252,7 +292,7 @@ func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, streamhData)
 }
 
-// handleGetInfo returns a list of all streams.
+// Returns a list of all streams. Open
 func (a *App) handleGetInfo(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	ctx := r.Context()
@@ -270,7 +310,7 @@ func (a *App) handleGetInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, results)
 }
 
-// handleStatusCheck returns the total number of transcripts.
+// Returns the total number of transcripts. Open
 func (a *App) handleStatusCheck(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context() // Get the request's context
 	var count int
@@ -285,7 +325,7 @@ func (a *App) handleStatusCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"transcriptCount": count})
 }
 
-// handleHealthCheck returns a simple OK.
+// Returns a simple OK. Open
 func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context() // Get the request's context
 	w.Header().Set("Content-Type", "application/json")
@@ -301,6 +341,136 @@ func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
+// Returns all keys for a channel. Protected by API key.
+func (a *App) handleGetMembershipKeys(w http.ResponseWriter, r *http.Request) {
+	channel := r.PathValue("channelName")
+	if channel == "" {
+		writeError(w, http.StatusBadRequest, "Channel name is required")
+		return
+	}
+
+	keys, err := a.GetMembershipKeys(r.Context(), channel)
+	if err != nil {
+		slog.Error("failed to get membership keys", "channel", channel, "err", err)
+		writeError(w, http.StatusInternalServerError, "Failed to get keys")
+		return
+	}
+
+	var resp []KeyResponse
+	for k, v := range keys {
+		resp = append(resp, KeyResponse{Key: k, ExpiresAt: v.Format(time.RFC3339)})
+	}
+	writeJSON(w, resp)
+}
+
+// Creates a new key for a channel. Protected by API key.
+func (a *App) handleCreateMembershipKey(w http.ResponseWriter, r *http.Request) {
+	channel := r.PathValue("channelName")
+	if channel == "" {
+		writeError(w, http.StatusBadRequest, "Channel name is required")
+		return
+	}
+
+	// Only allow keys for channels in the config.
+	found := slices.Contains(a.config.Membership, channel)
+	if !found {
+		Http400Errors.Inc()
+		writeError(w, http.StatusBadRequest, "Channel not found in config")
+		return
+	}
+
+	key, expiry, err := a.CreateMembershipKey(r.Context(), channel)
+	if err != nil {
+		slog.Error("failed to create membership key", "channel", channel, "err", err)
+		Http500Errors.Inc()
+		writeError(w, http.StatusInternalServerError, "Failed to create key")
+		return
+	}
+
+	writeJSON(w, map[string]string{
+		"key":       key,
+		"expiresAt": expiry.Format(time.RFC3339),
+	})
+}
+
+// Deletes all keys for a channel. Protected by API key.
+func (a *App) handleDeleteMembershipKeys(w http.ResponseWriter, r *http.Request) {
+	channel := r.PathValue("channelName")
+	if channel == "" {
+		Http400Errors.Inc()
+		writeError(w, http.StatusBadRequest, "Channel name is required")
+		return
+	}
+
+	if err := a.DeleteMembershipKeys(r.Context(), channel); err != nil {
+		slog.Error("failed to delete membership keys", "channel", channel, "err", err)
+		Http500Errors.Inc()
+		writeError(w, http.StatusInternalServerError, "Failed to delete keys")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Returns all keys for all channels. Protected by API key.
+func (a *App) handleGetAllMembershipKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := a.GetAllMembershipKeys(r.Context())
+	if err != nil {
+		slog.Error("failed to get all membership keys", "err", err)
+		Http500Errors.Inc()
+		writeError(w, http.StatusInternalServerError, "Failed to get all keys")
+		return
+	}
+
+	resp := make(map[string][]KeyResponse)
+	for channel, kMap := range keys {
+		for k, v := range kMap {
+			resp[channel] = append(resp[channel], KeyResponse{Key: k, ExpiresAt: v.Format(time.RFC3339)})
+		}
+	}
+	writeJSON(w, resp)
+}
+
+// Verifies if a key is valid for a channel. Open
+func (a *App) handleVerifyMembershipKey(w http.ResponseWriter, r *http.Request) {
+	key := r.Header.Get("X-Membership-Key")
+	if key == "" {
+		Http400Errors.Inc()
+		http.Error(w, "Missing X-Membership-Key header", http.StatusUnauthorized)
+		return
+	}
+
+	channel, ok := r.Context().Value(AuthorizedChannelKey).(string)
+	if !ok {
+		Http400Errors.Inc()
+		http.Error(w, "Invalid or expired key", http.StatusUnauthorized)
+		return
+	}
+
+	// when we get here, we know the key is valid for the channel. Now we just need to grab the expiry time.
+
+	keys, err := a.GetMembershipKeys(r.Context(), channel)
+	if err != nil {
+		slog.Error("failed to get keys for verified channel", "err", err)
+		Http500Errors.Inc()
+		writeError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	expiry, ok := keys[key]
+	if !ok {
+		slog.Error("Key was verified, but GetMembershipKeys return map did not have it", "channel", channel, "key", key, "keys", keys)
+		Http500Errors.Inc()
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{
+		"channel":   channel,
+		"expiresAt": expiry.Format(time.RFC3339),
+	})
+}
+
 // --- HTTP Helper Functions ---
 
 func writeJSON(w http.ResponseWriter, data any) {
@@ -314,22 +484,4 @@ func writeError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	writeJSON(w, map[string]string{"error": message})
-}
-
-// --- Utility Functions ---
-
-// formatDate converts "YYYYMMDD" to "YYYY-MM-DD"
-func formatDate(yyyymmdd string) (string, error) {
-	if len(yyyymmdd) != 8 {
-		return "", nil // Return empty string, let query ignore it
-	}
-	// Use a lightweight builder, no need for time.Parse
-	var sb strings.Builder
-	sb.Grow(10)
-	sb.WriteString(yyyymmdd[0:4])
-	sb.WriteByte('-')
-	sb.WriteString(yyyymmdd[4:6])
-	sb.WriteByte('-')
-	sb.WriteString(yyyymmdd[6:8])
-	return sb.String(), nil
 }

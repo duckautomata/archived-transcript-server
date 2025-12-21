@@ -6,6 +6,12 @@ import (
 	"sync"
 )
 
+type Config struct {
+	APIKey     string   `yaml:"api_key"`
+	Membership []string `yaml:"membership"`
+	KeyTTLDays int      `yaml:"key_ttl_days"`
+}
+
 // App holds application-wide dependencies
 type App struct {
 	db     *sql.DB
@@ -97,12 +103,22 @@ type GraphDataPoint struct {
 	Y int    `json:"y"`
 }
 
-type QueryData struct {
-	SearchText     string
-	MatchWholeWord bool
-	Streamer       string
-	StreamTitle    string
-	FromDate       string
-	ToDate         string
-	StreamTypes    []string
+type KeyResponse struct {
+	Key       string `json:"key"`
+	ExpiresAt string `json:"expiresAt"`
 }
+
+type QueryData struct {
+	SearchText        string
+	MatchWholeWord    bool
+	Streamer          string
+	StreamTitle       string
+	FromDate          string
+	ToDate            string
+	StreamTypes       []string
+	AuthorizedChannel string
+}
+
+type ContextKey string
+
+const AuthorizedChannelKey ContextKey = "authorizedChannel"
