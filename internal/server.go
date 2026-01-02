@@ -271,7 +271,7 @@ func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streamhData, noRows, err := a.retrieveStreamMetadata(ctx, id)
+	streamData, noRows, err := a.retrieveStreamMetadata(ctx, id)
 	if err != nil {
 		if noRows {
 			Http400Errors.Inc()
@@ -289,7 +289,7 @@ func (a *App) handleGetStreamMetadata(w http.ResponseWriter, r *http.Request) {
 	GetStreamMetadataProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	GetStreamMetadataRequests.Inc()
-	writeJSON(w, streamhData)
+	writeJSON(w, streamData)
 }
 
 // Returns a list of all streams. Open
@@ -433,6 +433,8 @@ func (a *App) handleGetAllMembershipKeys(w http.ResponseWriter, r *http.Request)
 
 // Verifies if a key is valid for a channel. Open
 func (a *App) handleVerifyMembershipKey(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	ctx := r.Context()
 	key := r.Header.Get("X-Membership-Key")
 	if key == "" {
 		Http400Errors.Inc()
@@ -440,7 +442,7 @@ func (a *App) handleVerifyMembershipKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	channel, ok := r.Context().Value(AuthorizedChannelKey).(string)
+	channel, ok := ctx.Value(AuthorizedChannelKey).(string)
 	if !ok {
 		Http400Errors.Inc()
 		http.Error(w, "Invalid or expired key", http.StatusUnauthorized)
@@ -449,7 +451,7 @@ func (a *App) handleVerifyMembershipKey(w http.ResponseWriter, r *http.Request) 
 
 	// when we get here, we know the key is valid for the channel. Now we just need to grab the expiry time.
 
-	keys, err := a.GetMembershipKeys(r.Context(), channel)
+	keys, err := a.GetMembershipKeys(ctx, channel)
 	if err != nil {
 		slog.Error("failed to get keys for verified channel", "err", err)
 		Http500Errors.Inc()
@@ -465,6 +467,10 @@ func (a *App) handleVerifyMembershipKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
+	VerifyMembershipProcessingDuration.Observe(time.Since(startTime).Seconds())
+	TotalRequests.Inc()
+	VerifyMembershipRequests.Inc()
 	writeJSON(w, map[string]string{
 		"channel":   channel,
 		"expiresAt": expiry.Format(time.RFC3339),

@@ -7,6 +7,7 @@ Using version [1.2](#12-2025-12-20)
 ## 1.2 (2025-12-20)
 Added membership key and hides "Members" stream type behind it.
 Added tests for the full app.
+Added metrics for the new endpoint
 
 ## 1.1 (2025-11-22)
 Fixed duplication when inserting existing transcript.

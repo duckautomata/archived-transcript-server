@@ -115,6 +115,22 @@ var (
 		},
 	})
 
+	// Membership Stuff
+	VerifyMembershipRequests = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "at_verify_membership_requests",
+		Help: "The number of GET /membership/verify requests.",
+	})
+	VerifyMembershipProcessingDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "at_verify_membership_processing_duration_seconds",
+		Help: "The duration of GET /membership/verify requests in seconds.",
+		Buckets: []float64{
+			0.001, 0.005, 0.01, 0.05, 0.1, 0.5, // ms
+			1, 2, 3, 4, 5, // seconds
+			10, 15, 20, // seconds
+		},
+	})
+
+	// Other
 	MemoryUsage = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "at_memory_usage_bytes",
 		Help: "The current memory usage.",
