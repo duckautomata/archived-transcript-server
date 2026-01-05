@@ -80,12 +80,20 @@ func (a *App) InitDB() error {
 		channel TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	);
+
+	-- Add indexes to improve performance on large datasets
+	CREATE INDEX IF NOT EXISTS idx_transcript_lines_transcript_id ON transcript_lines(transcript_id);
+	CREATE INDEX IF NOT EXISTS idx_transcripts_date ON transcripts(date);
 	`
 
 	_, err = tx.ExecContext(ctx, schema) // Use ExecContext
 	if err != nil {
 		return fmt.Errorf("failed to create database schema: %w", err)
 	}
+
+	// Optimize the database - this runs ANALYZE and other maintenance.
+	// It's recommended to run this periodically or on startup for SQLite.
+	_, _ = tx.ExecContext(ctx, "PRAGMA optimize")
 
 	return tx.Commit()
 }

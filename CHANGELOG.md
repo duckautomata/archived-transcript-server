@@ -1,8 +1,11 @@
 # latest
-Using version [1.2](#12-2025-12-20)
+Using version [1.3](#13-2026-01-05)
 
 # Major version 1
-Using version [1.2](#12-2025-12-20)
+Using version [1.3](#13-2026-01-05)
+
+## 1.3 (2026-01-05)
+Improved database performance for cold starts.
 
 ## 1.2 (2025-12-20)
 Added membership key and hides "Members" stream type behind it.
@@ -14,3 +17,4 @@ Fixed duplication when inserting existing transcript.
 
 ## 1.0 (2025-10-26)
 Initial version.
+ddddd

@@ -41,9 +41,9 @@ func main() {
 	slog.Info("server starting up", "version", Version, "build_time", BuildTime)
 
 	// --- Database Setup ---
-	// Use WAL mode for high read concurrency
+	// Use WAL mode for high read concurrency, mmap for faster reads, and synchronous=NORMAL for speed.
 	dbPath := filepath.Join("tmp", "transcripts.db")
-	dbSource := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)", dbPath)
+	dbSource := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)&_pragma=mmap_size(536870912)&_pragma=synchronous(NORMAL)", dbPath)
 
 	// Use the "sqlite3_with_regex" driver registered in internal/database.go
 	db, err := sql.Open("sqlite3_with_regex", dbSource)
