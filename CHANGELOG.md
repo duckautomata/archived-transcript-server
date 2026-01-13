@@ -1,8 +1,11 @@
 # latest
-Using version [1.3](#13-2026-01-05)
+Using version [1.4](#14-2026-01-13)
 
 # Major version 1
-Using version [1.3](#13-2026-01-05)
+Using version [1.4](#14-2026-01-13)
+
+## 1.4 (2026-01-13)
+Changed docker image to debian instead of alpine to fix random build issues.
 
 ## 1.3 (2026-01-05)
 Improved database performance for cold starts.
