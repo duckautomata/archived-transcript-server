@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-sqlite3"
 )
@@ -24,18 +25,49 @@ func init() {
 }
 
 // Creates the necessary tables and FTS5 virtual table
-func (a *App) InitDB() error {
-	// For initialization, we use context.Background() as it's not
-	// tied to a specific request.
-	ctx := context.Background()
-
-	// Use a transaction for schema creation to ensure atomicity.
-	tx, err := a.db.BeginTx(ctx, nil) // Use BeginTx
+func InitDB(path string, config DatabaseConfig) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3_with_regex", path)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-	// Defer a rollback. If the transaction is successfully committed, this is a no-op.
-	defer tx.Rollback()
+
+	// Set defaults if not provided in config
+	if config.JournalMode == "" {
+		config.JournalMode = "WAL"
+	}
+	if config.BusyTimeoutMS == 0 {
+		config.BusyTimeoutMS = 5000
+	}
+	if config.Synchronous == "" {
+		config.Synchronous = "NORMAL"
+	}
+	if config.CacheSizeKB == 0 {
+		config.CacheSizeKB = 200000 // 200MB
+	}
+	if config.TempStore == "" {
+		config.TempStore = "MEMORY"
+	}
+	if config.MmapSizeBytes == 0 {
+		config.MmapSizeBytes = 536870912 // 512MB
+	}
+
+	// Performance optimizations
+	pragmas := []string{
+		fmt.Sprintf("PRAGMA journal_mode=%s;", config.JournalMode),
+		fmt.Sprintf("PRAGMA busy_timeout=%d;", config.BusyTimeoutMS),
+		fmt.Sprintf("PRAGMA synchronous=%s;", config.Synchronous),
+		"PRAGMA foreign_keys=ON;",
+		fmt.Sprintf("PRAGMA cache_size=%d;", -config.CacheSizeKB), // Negate to specify KB
+		fmt.Sprintf("PRAGMA temp_store=%s;", config.TempStore),
+		fmt.Sprintf("PRAGMA mmap_size=%d;", config.MmapSizeBytes),
+	}
+
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to set pragma '%s': %w", pragma, err)
+		}
+	}
 
 	schema := `
 	CREATE TABLE IF NOT EXISTS transcripts (
@@ -86,16 +118,41 @@ func (a *App) InitDB() error {
 	CREATE INDEX IF NOT EXISTS idx_transcripts_date ON transcripts(date);
 	`
 
-	_, err = tx.ExecContext(ctx, schema) // Use ExecContext
+	_, err = db.Exec(schema) // Use Exec
 	if err != nil {
-		return fmt.Errorf("failed to create database schema: %w", err)
+		db.Close()
+		return nil, fmt.Errorf("failed to create database schema: %w", err)
 	}
 
 	// Optimize the database - this runs ANALYZE and other maintenance.
 	// It's recommended to run this periodically or on startup for SQLite.
-	_, _ = tx.ExecContext(ctx, "PRAGMA optimize")
+	_, _ = db.Exec("PRAGMA optimize")
 
-	return tx.Commit()
+	// Connection pool settings
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Warm up the database to populate the cache
+	if config.JournalMode != "MEMORY" {
+		go func() {
+			// Run in background to not block startup, though for small DBs it's fast.
+			// A full table scan forces pages into memory.
+			var count int
+			// Accessing a column (like 'id' or 'text') forces SQLite to read the table pages
+			if err := db.QueryRow("SELECT count(id) FROM transcripts").Scan(&count); err != nil {
+				slog.Warn("failed to warm up transcripts", "err", err)
+			}
+			if err := db.QueryRow("SELECT count(length(text)) FROM transcript_lines").Scan(&count); err != nil {
+				slog.Warn("failed to warm up transcript_lines", "err", err)
+			}
+			if err := db.QueryRow("SELECT count(length(clean_text)) FROM transcript_search").Scan(&count); err != nil {
+				slog.Warn("failed to warm up transcript_search", "err", err)
+			}
+		}()
+	}
+
+	return db, nil
 }
 
 // Inserts a transcript into the database. Overwrites any existing transcript with the same ID.

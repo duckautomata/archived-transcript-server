@@ -7,9 +7,19 @@ import (
 )
 
 type Config struct {
-	APIKey     string   `yaml:"api_key"`
-	Membership []string `yaml:"membership"`
-	KeyTTLDays int      `yaml:"key_ttl_days"`
+	APIKey     string         `yaml:"api_key"`
+	Membership []string       `yaml:"membership"`
+	KeyTTLDays int            `yaml:"key_ttl_days"`
+	Database   DatabaseConfig `yaml:"database"`
+}
+
+type DatabaseConfig struct {
+	JournalMode   string `yaml:"journal_mode"`
+	BusyTimeoutMS int    `yaml:"busy_timeout_ms"`
+	Synchronous   string `yaml:"synchronous"`
+	CacheSizeKB   int    `yaml:"cache_size_kb"`
+	TempStore     string `yaml:"temp_store"`
+	MmapSizeBytes int64  `yaml:"mmap_size_bytes"`
 }
 
 // App holds application-wide dependencies
@@ -21,19 +31,13 @@ type App struct {
 	regexCacheMu sync.Mutex
 }
 
-func NewApp(db *sql.DB) (*App, error) {
-	// --- Config Setup ---
-	config, err := GetConfig()
-	if err != nil {
-		return nil, err
-	}
-
+func NewApp(db *sql.DB, config Config) *App {
 	return &App{
 		db:           db,
 		config:       config,
 		regexCache:   make(map[string]*regexp.Regexp),
 		regexCacheMu: sync.Mutex{},
-	}, nil
+	}
 }
 
 // TranscriptInput is the structure for the POST /transcript request.

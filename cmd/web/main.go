@@ -3,7 +3,6 @@ package main
 import (
 	"archived-transcript-server/internal"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,12 +42,16 @@ func main() {
 	// --- Database Setup ---
 	// Use WAL mode for high read concurrency, mmap for faster reads, and synchronous=NORMAL for speed.
 	dbPath := filepath.Join("tmp", "transcripts.db")
-	dbSource := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)&_pragma=mmap_size(536870912)&_pragma=synchronous(NORMAL)", dbPath)
 
-	// Use the "sqlite3_with_regex" driver registered in internal/database.go
-	db, err := sql.Open("sqlite3_with_regex", dbSource)
+	config, err := internal.GetConfig()
 	if err != nil {
-		slog.Error("Failed to open database", "func", "main", "err", err)
+		slog.Error("unable to read in config", "func", "main", "err", err)
+		os.Exit(1)
+	}
+
+	db, err := internal.InitDB(dbPath, config.Database)
+	if err != nil {
+		slog.Error("unable to initialize database", "func", "main", "path", dbPath, "err", err)
 		os.Exit(1)
 	}
 	defer db.Close()
@@ -62,23 +65,10 @@ func main() {
 		// We can choose to exit or continue, but if regex fails, search will break.
 		os.Exit(1)
 	}
-	slog.Info("Database opened and REGEXP function verified.", "func", "main", "path", dbSource)
+	slog.Info("Database opened and REGEXP function verified.", "func", "main", "path", dbPath)
 
-	// Set connection pool settings for performance
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
-	app, err := internal.NewApp(db)
-	if err != nil {
-		slog.Error("failed to initialize app", "func", "main", "err", err)
-		os.Exit(1)
-	}
-	err = app.InitDB()
-	if err != nil {
-		slog.Error("failed to initialize database", "func", "main", "err", err)
-		os.Exit(1)
-	}
+	// App Setup
+	app := internal.NewApp(db, config)
 
 	// Ensure membership keys exist for configured channels
 	if err := app.EnsureMembershipKeys(ctx); err != nil {
