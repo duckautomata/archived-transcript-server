@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -445,4 +447,50 @@ func TestServer_APIKeyMiddleware(t *testing.T) {
 			t.Errorf("Expected 201 Created, got %d", resp.StatusCode)
 		}
 	})
+}
+
+func TestServer_HandlePostTranscript_Gzip(t *testing.T) {
+	app := setupTestApp(t)
+	defer app.db.Close()
+	mux := http.NewServeMux()
+	app.InitServerEndpoints(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	client := ts.Client()
+
+	// JSON payload
+	body := `{"id":"gzip-id", "streamer":"StreamerGzip", "date":"2023-01-01", "srt":"content"}`
+
+	// Compress payload
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	gw.Write([]byte(body))
+	gw.Close()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/transcript", &buf)
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("X-API-Key", app.config.APIKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("Expected 201 Created, got %d", resp.StatusCode)
+	}
+
+	// Verify it exists
+	ctx := context.Background()
+	tr, noRows, err := app.retrieveTranscript(ctx, "gzip-id")
+	if err != nil {
+		t.Fatalf("Failed to retrieve transcript: %v", err)
+	}
+	if noRows {
+		t.Error("Expected transcript to be found")
+	}
+	if tr.Streamer != "StreamerGzip" {
+		t.Errorf("Expected streamer 'StreamerGzip', got '%s'", tr.Streamer)
+	}
 }

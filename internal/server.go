@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -14,7 +15,7 @@ import (
 // Initializes all server endpoints and any protected middleware
 func (a *App) InitServerEndpoints(mux *http.ServeMux) {
 	// API Key protected routes
-	mux.HandleFunc("POST /transcript", a.apiKeyMiddleware(a.handlePostTranscript))
+	mux.HandleFunc("POST /transcript", a.apiKeyMiddleware(a.gzipMiddleware(a.handlePostTranscript)))
 	mux.HandleFunc("GET /membership/{channelName}", a.apiKeyMiddleware(a.handleGetMembershipKeys))
 	mux.HandleFunc("POST /membership/{channelName}", a.apiKeyMiddleware(a.handleCreateMembershipKey))
 	mux.HandleFunc("DELETE /membership/{channelName}", a.apiKeyMiddleware(a.handleDeleteMembershipKeys))
@@ -76,6 +77,23 @@ func (a *App) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if key != a.config.APIKey {
 			http.Error(w, "Forbidden", http.StatusUnauthorized)
 			return
+		}
+		next(w, r)
+	}
+}
+
+// Check for gzip content encoding and wrap body if present
+func (a *App) gzipMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			reader, err := gzip.NewReader(r.Body)
+			if err != nil {
+				Http400Errors.Inc()
+				writeError(w, http.StatusBadRequest, "Invalid gzip body")
+				return
+			}
+			defer reader.Close()
+			r.Body = reader
 		}
 		next(w, r)
 	}
