@@ -1,8 +1,14 @@
 # latest
-Using version [1.4](#14-2026-01-13)
+Using version [1.5](#15-2026-01-25)
 
 # Major version 1
-Using version [1.4](#14-2026-01-13)
+Using version [1.5](#15-2026-01-25)
+
+## 1.5 (2026-01-25)
+Accept gzip content encoding on POST /transcripts.
+Switched back to alpine for reduced image size.
+Simplified DB setup.
+Added mem cache and db configs.
 
 ## 1.4 (2026-01-13)
 Changed docker image to debian instead of alpine to fix random build issues.
@@ -20,4 +26,3 @@ Fixed duplication when inserting existing transcript.
 
 ## 1.0 (2025-10-26)
 Initial version.
-ddddd
