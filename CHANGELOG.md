@@ -5,7 +5,7 @@ Using version [1.5](#15-2026-01-25)
 Using version [1.5](#15-2026-01-25)
 
 ## 1.5 (2026-01-25)
-Accept gzip content encoding on POST /transcripts.
+Accept gzip and zstd content encoding on POST /transcripts.
 Switched back to alpine for reduced image size.
 Simplified DB setup.
 Added mem cache and db configs.

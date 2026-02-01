@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestServer_InvalidMethod(t *testing.T) {
@@ -492,5 +494,51 @@ func TestServer_HandlePostTranscript_Gzip(t *testing.T) {
 	}
 	if tr.Streamer != "StreamerGzip" {
 		t.Errorf("Expected streamer 'StreamerGzip', got '%s'", tr.Streamer)
+	}
+}
+
+func TestServer_HandlePostTranscript_Zstd(t *testing.T) {
+	app := setupTestApp(t)
+	defer app.db.Close()
+	mux := http.NewServeMux()
+	app.InitServerEndpoints(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	client := ts.Client()
+
+	// JSON payload
+	body := `{"id":"zstd-id", "streamer":"StreamerZstd", "date":"2023-01-01", "srt":"content"}`
+
+	// Compress payload
+	var buf bytes.Buffer
+	enc, _ := zstd.NewWriter(&buf)
+	enc.Write([]byte(body))
+	enc.Close()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/transcript", &buf)
+	req.Header.Set("Content-Encoding", "zstd")
+	req.Header.Set("X-API-Key", app.config.APIKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("Expected 201 Created, got %d", resp.StatusCode)
+	}
+
+	// Verify it exists
+	ctx := context.Background()
+	tr, noRows, err := app.retrieveTranscript(ctx, "zstd-id")
+	if err != nil {
+		t.Fatalf("Failed to retrieve transcript: %v", err)
+	}
+	if noRows {
+		t.Error("Expected transcript to be found")
+	}
+	if tr.Streamer != "StreamerZstd" {
+		t.Errorf("Expected streamer 'StreamerZstd', got '%s'", tr.Streamer)
 	}
 }

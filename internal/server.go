@@ -4,18 +4,20 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Initializes all server endpoints and any protected middleware
 func (a *App) InitServerEndpoints(mux *http.ServeMux) {
 	// API Key protected routes
-	mux.HandleFunc("POST /transcript", a.apiKeyMiddleware(a.gzipMiddleware(a.handlePostTranscript)))
+	mux.HandleFunc("POST /transcript", a.apiKeyMiddleware(a.decompressionMiddleware(a.handlePostTranscript)))
 	mux.HandleFunc("GET /membership/{channelName}", a.apiKeyMiddleware(a.handleGetMembershipKeys))
 	mux.HandleFunc("POST /membership/{channelName}", a.apiKeyMiddleware(a.handleCreateMembershipKey))
 	mux.HandleFunc("DELETE /membership/{channelName}", a.apiKeyMiddleware(a.handleDeleteMembershipKeys))
@@ -82,10 +84,12 @@ func (a *App) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Check for gzip content encoding and wrap body if present
-func (a *App) gzipMiddleware(next http.HandlerFunc) http.HandlerFunc {
+// Check for gzip/zstd content encoding and wrap body if present
+func (a *App) decompressionMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Content-Encoding") == "gzip" {
+		encoding := r.Header.Get("Content-Encoding")
+		switch encoding {
+		case "gzip":
 			reader, err := gzip.NewReader(r.Body)
 			if err != nil {
 				Http400Errors.Inc()
@@ -94,6 +98,15 @@ func (a *App) gzipMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 			defer reader.Close()
 			r.Body = reader
+		case "zstd":
+			reader, err := zstd.NewReader(r.Body)
+			if err != nil {
+				Http400Errors.Inc()
+				writeError(w, http.StatusBadRequest, "Invalid zstd body")
+				return
+			}
+			defer reader.Close()
+			r.Body = io.NopCloser(reader)
 		}
 		next(w, r)
 	}
