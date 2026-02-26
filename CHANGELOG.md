@@ -1,8 +1,11 @@
 # latest
-Using version [1.5](#15-2026-01-25)
+Using version [1.6](#16-2026-02-26)
 
 # Major version 1
-Using version [1.5](#15-2026-01-25)
+Using version [1.6](#16-2026-02-26)
+
+## 1.6 (2026-02-26)
+Upgraded go version to 1.26.
 
 ## 1.5 (2026-01-25)
 Accept gzip and zstd content encoding on POST /transcripts.

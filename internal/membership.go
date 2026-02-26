@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -61,15 +62,15 @@ func (a *App) CreateMembershipKey(ctx context.Context, channel string) (newKey s
 	// 3. Prune if needed (Limit 2 active)
 	if len(keys) >= 2 {
 		args := make([]any, len(keys)-1)
-		placeholders := ""
+		var placeholders strings.Builder
 		for i := range args {
 			args[i] = keys[i].Key
 			if i > 0 {
-				placeholders += ","
+				placeholders.WriteString(",")
 			}
-			placeholders += "?"
+			placeholders.WriteString("?")
 		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM membership_keys WHERE key IN ("+placeholders+")", args...); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM membership_keys WHERE key IN ("+placeholders.String()+")", args...); err != nil {
 			return "", time.Time{}, fmt.Errorf("failed to delete old keys: %w", err)
 		}
 	}

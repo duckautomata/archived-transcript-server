@@ -178,7 +178,7 @@ func createSnippet(originalText, cleanText, searchText string, wordBuffer int) s
 	cleanMatchWordIndex := -1 // Starting index of the phrase in cleanWords
 	for i := 0; i <= len(cleanWords)-len(cleanSearchWords); i++ {
 		match := true
-		for j := 0; j < len(cleanSearchWords); j++ {
+		for j := range cleanSearchWords {
 			if i+j >= len(cleanWords) || cleanWords[i+j] != cleanSearchWords[j] {
 				match = false
 				break
