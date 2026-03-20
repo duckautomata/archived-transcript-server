@@ -11,12 +11,11 @@ IMAGE_NAME="duckautomata/archived-transcript-server"
 # ---------------------
 
 # --- Path and Environment Setup ---
-# This ensures the script always runs from the project's root directory.
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
-cd "$PROJECT_ROOT" || exit 1
-
+# Change to the project root directory
+cd "$(dirname "$0")/.."
 echo "Running from project root: $PWD"
+
+set -e
 
 # --- Input Validation ---
 # Check if a version argument was provided
@@ -38,6 +37,15 @@ else
     echo "   Please use the format 'major.minor' (e.g., '1.2' or '10.4') or 'dev'."
     exit 1
 fi
+
+# --- Code Quality Checks ---
+echo -e "\nRunning code quality checks before build..."
+
+echo "   Running tests..."
+go test -tags fts5 ./internal/...
+
+echo "   All checks passed."
+echo "-----------------------------------"
 
 # --- Tag Generation ---
 # Generate Build Time
