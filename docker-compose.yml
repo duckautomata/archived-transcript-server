@@ -1,0 +1,13 @@
+services:
+  archive:
+    image: duckautomata/archived-transcript-server:latest
+    restart: always
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro,Z
+      - ./tmp:/app/tmp:Z
+    networks:
+      - stack-net
+
+networks:
+  stack-net:
+    external: true
