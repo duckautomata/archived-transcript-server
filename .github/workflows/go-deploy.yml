@@ -22,6 +22,7 @@ jobs:
     environment: production
     permissions:
       contents: write
+      checks: write
 
     steps:
       - name: Checkout Code
