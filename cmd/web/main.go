@@ -12,13 +12,20 @@ import (
 	"time"
 )
 
-// To be set via ldflags
+// Set via environment variables VERSION and BUILD_TIME
 var (
 	Version   = "local"
 	BuildTime = "unknown"
 )
 
 func main() {
+	if v := os.Getenv("VERSION"); v != "" {
+		Version = v
+	}
+	if bt := os.Getenv("BUILD_TIME"); bt != "" {
+		BuildTime = bt
+	}
+
 	// --- Logging Setup ---
 	if err := os.MkdirAll(filepath.Join("tmp", "_logs"), 0755); err != nil {
 		slog.Error("failed to create log directory", "func", "main", "path", "tmp", "err", err)
