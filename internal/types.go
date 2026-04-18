@@ -24,17 +24,21 @@ type DatabaseConfig struct {
 
 // App holds application-wide dependencies
 type App struct {
-	db     *sql.DB
-	config Config
+	db        *sql.DB
+	config    Config
+	Version   string
+	BuildTime string
 	// We still need a regex cache for counting matches *within* a line
 	regexCache   map[string]*regexp.Regexp
 	regexCacheMu sync.Mutex
 }
 
-func NewApp(db *sql.DB, config Config) *App {
+func NewApp(db *sql.DB, config Config, version, buildTime string) *App {
 	return &App{
 		db:           db,
 		config:       config,
+		Version:      version,
+		BuildTime:    buildTime,
 		regexCache:   make(map[string]*regexp.Regexp),
 		regexCacheMu: sync.Mutex{},
 	}

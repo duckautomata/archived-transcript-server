@@ -75,7 +75,7 @@ func main() {
 	slog.Info("Database opened and REGEXP function verified.", "func", "main", "path", dbPath)
 
 	// App Setup
-	app := internal.NewApp(db, config)
+	app := internal.NewApp(db, config, Version, BuildTime)
 
 	// Ensure membership keys exist for configured channels
 	if err := app.EnsureMembershipKeys(ctx); err != nil {

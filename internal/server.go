@@ -24,6 +24,7 @@ func (a *App) InitServerEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("GET /membership", a.apiKeyMiddleware(a.handleGetAllMembershipKeys))
 
 	// Public routes
+	mux.HandleFunc("GET /status", a.getStatusHandler)
 	mux.HandleFunc("GET /info", a.handleGetInfo)
 	mux.HandleFunc("GET /statuscheck", a.handleStatusCheck)
 	mux.HandleFunc("GET /healthcheck", a.handleHealthCheck)
@@ -339,6 +340,15 @@ func (a *App) handleGetInfo(w http.ResponseWriter, r *http.Request) {
 	RequestsProcessingDuration.Observe(time.Since(startTime).Seconds())
 	TotalRequests.Inc()
 	writeJSON(w, results)
+}
+
+func (app *App) getStatusHandler(w http.ResponseWriter, r *http.Request) {
+	resp := map[string]any{
+		"version":   app.Version,
+		"buildTime": app.BuildTime,
+	}
+
+	writeJSON(w, resp)
 }
 
 // Returns the total number of transcripts. Open

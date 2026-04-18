@@ -30,5 +30,5 @@ func setupTestApp(t *testing.T) *App {
 		t.Fatalf("Failed to init DB: %v", err)
 	}
 
-	return NewApp(db, config)
+	return NewApp(db, config, "test", "0")
 }
