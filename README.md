@@ -81,7 +81,14 @@ Tests should be run before every commit.
 
 ### Debugging/Logging
 
-Logging is set up for the entire program, and everything should be logged. The console will print info and higher logs (everything but debug). On startup, a log file under `tmp/_logs` will be created and will contain every log. In the event of an error, check this log file to see what went wrong.
+Logging is set up for the entire program, and everything should be logged. Logs fan out to two sinks:
+
+- **Console** — human-readable text, info and higher (everything but debug).
+- **File** — `tmp/_logs/server.log`, structured JSON, debug and higher (the complete record). In the event of an error, check this file to see what went wrong.
+
+The log file rotates once it reaches 1MB. Up to 10 rotated backups (`server-<time>.log`) are kept for 90 days, left uncompressed so the archives stay `grep`/`tail`-able. The active file uses a stable name and is appended to across restarts, so the file is not reset each run. Disk usage for the whole set is capped at roughly 11MB.
+
+Each run is bracketed by `========== SERVER START ==========` and `========== SERVER STOP ==========` banner lines (the stop banner is written on graceful shutdown via SIGINT/SIGTERM), so you can `grep` for run boundaries.
 
 
 ## Docker

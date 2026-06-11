@@ -4,11 +4,12 @@ import (
 	"archived-transcript-server/internal"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -27,23 +28,14 @@ func main() {
 	}
 
 	// --- Logging Setup ---
-	if err := os.MkdirAll(filepath.Join("tmp", "_logs"), 0755); err != nil {
-		slog.Error("failed to create log directory", "func", "main", "path", "tmp", "err", err)
-	}
+	// lumberjack creates the log directory and file lazily on first write, so no
+	// manual MkdirAll/OpenFile is needed. The file rotates at 1MB and rotated
+	// backups are kept uncompressed under tmp/_logs.
+	logPath := filepath.Join("tmp", "_logs", "server.log")
+	logCloser := internal.SetupLogging(logPath)
+	defer logCloser.Close()
 
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	fileName := fmt.Sprintf("%s-server.log", timestamp)
-	filePath := filepath.Join("tmp", "_logs", fileName)
-
-	// Open the log file.
-	logFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		slog.Error("unable to open log file", "func", "main", "path", filePath, "err", err)
-	}
-	defer logFile.Close()
-
-	internal.SetupLogging(logFile)
-
+	slog.Info("========== SERVER START ==========")
 	slog.Info("server starting up", "version", Version, "build_time", BuildTime)
 
 	// --- Database Setup ---
@@ -96,9 +88,28 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 
-	slog.Info("server listening on port 8080", "func", "main")
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error("server failed", "err", err)
-		os.Exit(1)
+	// --- Signal handling / graceful shutdown ---
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		slog.Info("server listening on port 8080", "func", "main")
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server failed", "func", "main", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-stop // block until SIGINT/SIGTERM
+
+	slog.Info("========== SERVER STOP ==========")
+	slog.Info("shutting down server...", "func", "main")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown failed", "func", "main", "err", err)
 	}
+
+	slog.Info("server exited cleanly", "func", "main")
 }
