@@ -3,8 +3,8 @@ module archived-transcript-server
 go 1.26
 
 require (
-	github.com/klauspost/compress v1.19.1
-	github.com/mattn/go-sqlite3 v1.14.49
+	github.com/klauspost/compress v1.19.2
+	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/prometheus/client_golang v1.24.1
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
